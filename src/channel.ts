@@ -1,10 +1,8 @@
 import axios from 'axios';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import {
-  DEFAULT_ACCOUNT_ID,
-  createReplyPrefixContext,
-  registerPluginHttpRoute,
-} from 'openclaw/plugin-sdk';
+import { DEFAULT_ACCOUNT_ID } from 'openclaw/plugin-sdk/core';
+import { createReplyPrefixContext } from 'openclaw/plugin-sdk/channel-message';
+import { registerPluginHttpRoute } from 'openclaw/plugin-sdk/webhook-ingress';
 import type {
   ChannelMeta,
   ChannelPlugin,
@@ -106,6 +104,55 @@ function readTokenHeader(req: IncomingMessage): string {
     return raw[0] ?? '';
   }
   return typeof raw === 'string' ? raw : '';
+}
+
+/**
+ * Verify the standard DingTalk custom-robot signed-callback.
+ *
+ * A standard DingTalk custom robot signs its POST callback with `timestamp` and
+ * `sign` in the URL query, where
+ *   sign = urlencode(base64( HmacSHA256( (timestamp + "\n" + secretKey), secretKey ) ) )
+ * This mirrors sign.ts::dingtalkSign() in reverse. Returns true when the
+ * signature matches and `timestamp` is within `maxAgeMs` of now (replay guard).
+ *
+ * Standard DingTalk callbacks do NOT send the custom `token` HTTP header that
+ * createWebhookHandler also accepts; this verification is what lets real
+ * DingTalk messages through.
+ */
+function verifyDingtalkSign(
+  req: IncomingMessage,
+  secretKey: string,
+  maxAgeMs = 60 * 60 * 1000,
+): boolean {
+  if (!secretKey) return false;
+  let query = '';
+  try {
+    query = new URL(req.url ?? '', 'http://localhost').search ?? '';
+  } catch {
+    query = (req.url ?? '').split('?')[1] ?? '';
+  }
+  const params = new URLSearchParams(query);
+  const timestamp = params.get('timestamp');
+  const sign = params.get('sign');
+  if (!timestamp || !sign) return false;
+  const tsNum = Number(timestamp);
+  if (!Number.isFinite(tsNum)) return false;
+  if (Math.abs(Date.now() - tsNum) > maxAgeMs) return false;
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const crypto = require('crypto');
+    const expected = crypto
+      .createHmac('sha256', secretKey)
+      .update(`${timestamp}\n${secretKey}`)
+      .digest('base64');
+    // URLSearchParams already percent-decodes the incoming sign, so compare the
+    // decoded base64 forms (a base64 sig may end with '=' -> '%3D' once encoded).
+    const received = decodeURIComponent(sign);
+    return expected.length === received.length && expected === received;
+  } catch {
+    return false;
+  }
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
@@ -750,8 +797,16 @@ function createWebhookHandler(params: {
       return;
     }
 
+    // Accept either the standard DingTalk signed-callback (timestamp+sign in the
+    // URL query, verified with secretKey) or, for backward compatibility with
+    // proxies that inject it, the `token` header whose value (a prefix of, or
+    // equal to) secretKey. Standard DingTalk custom-robot callbacks do NOT send
+    // the `token` header, so sign verification is what makes real DingTalk
+    // messages come through.
     const token = readTokenHeader(req);
-    if (!token || !params.account.secretKey.startsWith(token)) {
+    const tokenOk = Boolean(token) && params.account.secretKey.startsWith(token);
+    const signOk = verifyDingtalkSign(req, params.account.secretKey);
+    if (!tokenOk && !signOk) {
       respondJson(res, 401, { errcode: 1, errmsg: '[dingtalk] invalid token' });
       return;
     }
@@ -894,6 +949,7 @@ export const dingtalkPlugin: ChannelPlugin = {
     startAccount: async (ctx: {
       cfg: OpenClawConfig;
       accountId: string;
+      abortSignal?: AbortSignal;
       log?: {
         info?: (message: string) => void;
         error?: (message: string) => void;
@@ -936,6 +992,23 @@ export const dingtalkPlugin: ChannelPlugin = {
           `dingtalk[${account.accountId}] active outbound disabled: channels.dingtalk.accessToken is empty; if you see "Outbound not configured for channel: dingtalk", it comes from OpenClaw core routing/config rather than this plugin outbound sender.`,
         );
       }
+
+      // Webhook channels register an inbound HTTP route and have no long-lived work
+      // to do in startAccount. The gateway's channel runner awaits this promise and
+      // treats a resolving startAccount as "channel exited without an error",
+      // auto-restarting forever (DingTalk perpetually not-running). Keep this promise
+      // pending until the gateway aborts the account (stop/reload) so the channel
+      // stays alive and the registered route keeps serving.
+      const abortSignal = ctx.abortSignal;
+      if (abortSignal && abortSignal.aborted) return;
+      return new Promise<void>((resolve) => {
+        if (!abortSignal) return resolve();
+        abortSignal.addEventListener(
+          'abort',
+          () => resolve(),
+          { once: true },
+        );
+      });
     },
     stopAccount: async (ctx: { accountId: string; log?: { info?: (message: string) => void } }) => {
       const unregister = routeUnregisterByAccount.get(ctx.accountId);

@@ -279,6 +279,18 @@ npm run lint:fix
 
 For npm publishing, run `npm run build` before `npm publish`.
 
+## Note for openclaw 2026.9.2
+
+This fork carries local fixes required to make DingTalk work after upgrading
+OpenClaw to 2026.9.2. Upstream `1.1.x` is unusable there out of the box — five
+stacked defects (missing `channelConfigs`, CJS vs `"type":"module"`, bare
+`openclaw/plugin-sdk` require, `startAccount` keepalive, inbound auth vs DingTalk
+sign protocol). The deviations from upstream (SDK subpath imports, signed-callback
+verification, channel lifecycle keepalive, manifest `channelConfigs`, `package.json`
+`main`/`type`/`extensions`) are applied in `src/`, `openclaw.plugin.json` and
+`package.json`. See [`docs/upgrade-fixes-2026.9.2.md`](docs/upgrade-fixes-2026.9.2.md)
+for the full root-cause analysis, workarounds applied, and suggested upstream fixes.
+
 ## Current Limitations
 
 - Only `text` and `richText` are handled for inbound parsing

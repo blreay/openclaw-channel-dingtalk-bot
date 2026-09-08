@@ -1,10 +1,16 @@
-declare module 'openclaw/plugin-sdk' {
+declare module 'openclaw/plugin-sdk/core' {
   export const DEFAULT_ACCOUNT_ID: string;
   export function emptyPluginConfigSchema(): unknown;
+}
+
+declare module 'openclaw/plugin-sdk/channel-message' {
   export function createReplyPrefixContext(params: unknown): {
     responsePrefix?: string;
     responsePrefixContextProvider?: unknown;
   };
+}
+
+declare module 'openclaw/plugin-sdk/webhook-ingress' {
   export function registerPluginHttpRoute(params: unknown): () => void;
 }
 

@@ -8,5 +8,26 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {}
+  },
+  "channelConfigs": {
+    "dingtalk": {
+      "label": "DingTalk (钉钉)",
+      "description": "钉钉企业内部机器人，使用 Webhook 模式接入 OpenClaw gateway。",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "secretKey": { "type": "string" },
+          "webhookPath": { "type": "string" },
+          "accessToken": { "type": "string" },
+          "blockStreaming": { "type": "boolean" },
+          "toolProgress": { "type": "string", "enum": ["off", "simple"] },
+          "toolProgressInGroup": { "type": "string", "enum": ["off", "simple"] }
+        },
+        "required": ["secretKey"]
+      }
+    }
   }
 }

@@ -1,5 +1,5 @@
 import type { OpenClawPluginApi } from 'openclaw/dist/plugin-sdk/index.js';
-import { emptyPluginConfigSchema } from 'openclaw/plugin-sdk';
+import { emptyPluginConfigSchema } from 'openclaw/plugin-sdk/core';
 import { dingtalkPlugin } from './channel';
 import { setRuntime } from './runtime';
 
