@@ -619,6 +619,23 @@ async function handleInboundMessage(params: {
     return;
   }
 
+  // Send an immediate acknowledgement so the DingTalk user sees OpenClaw has
+  // received the message before the agent (which may take seconds) responds.
+  // This is fire-and-forget from the agent flow: a failure here is logged but
+  // never blocks the real agent reply. Uses the inbound sessionWebhook the same
+  // way the real reply delivery does (signed with secretKey).
+  if (payload.sessionWebhook) {
+    try {
+      await sendMarkdownBySessionWebhook({
+        sessionWebhook: payload.sessionWebhook,
+        secretKey: account.secretKey,
+        text: '💪收到，处理中…',
+      });
+    } catch (err) {
+      log(`dingtalk[${account.accountId}] immediate ack failed: ${String(err)}`);
+    }
+  }
+
   const route = runtime.channel.routing.resolveAgentRoute({
     cfg,
     channel: CHANNEL_ID,
