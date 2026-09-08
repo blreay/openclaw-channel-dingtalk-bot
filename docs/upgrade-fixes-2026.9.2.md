@@ -114,6 +114,14 @@ After the fix, the matrix becomes: sign (no token header) → 200 + agent trigge
 
 **Suggested package fix:** authenticate inbound with the standard DingTalk `timestamp`+`sign` query (the plugin already has `sign.js` / `dingtalkSign`; the inverse verify is trivial), and drop or make the `token` header secondary. Optionally wire verification through the gateway's `applyBasicWebhookRequestGuards`/`withResolvedWebhookRequestPipeline` SDK surface (`plugin-sdk/webhook-ingress`) instead of hand-rolling. The README currently states `secretKey === token` as the auth rule without noting DingTalk callbacks don't send a `token` header — this misleads operators into expecting it to work out of the box.
 
+## Enhancement: immediate DingTalk ack on inbound
+
+Once #1–#5 are fixed and real DingTalk callbacks come through, a DingTalk user sending a message otherwise sees nothing until the agent replies (which may take seconds), leaving them unsure whether the message arrived or the bot is just slow. This fork replies **immediately** with `💪收到，处理中…` via the inbound `sessionWebhook`, then the normal reply follows.
+
+Implementation: `handleInboundMessage` in `src/channel.ts`, after the group/non-mention ignore check passes and before agent routing (`resolveAgentRoute`), calls `sendMarkdownBySessionWebhook({ sessionWebhook: payload.sessionWebhook, secretKey: account.secretKey, text: '💪收到，处理中…' })`. The ack is fire-and-forget — any failure (no `sessionWebhook`, send error) is logged (`immediate ack failed`) and never blocks the real agent reply. The same signed-`sessionWebhook` path used by the real reply is reused, so no new outbound capability or extra credential is needed.
+
+End-to-end confirmed: a DingTalk `@bot` message produces the ack within milliseconds, then the agent reply a few seconds later.
+
 ## Reproduction
 1. Install openclaw 2026.9.2 + `openclaw-channel-dingtalk-bot@1.1.2`.
 2. Configure `channels.dingtalk.secretKey` (enable the channel).
