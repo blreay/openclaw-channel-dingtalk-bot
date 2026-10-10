@@ -13,6 +13,7 @@ export interface ResolvedDingTalkAccount {
   enabled: boolean;
   secretKey: string;
   accessToken: string;
+  webhookPath: string;
   blockStreaming: boolean;
   toolProgress: 'off' | 'simple';
   toolProgressInGroup: 'off' | 'simple';

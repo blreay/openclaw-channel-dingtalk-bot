@@ -47,7 +47,7 @@ the OpenClaw gateway to the public network.
 - **Inbound:** DingTalk `POST` callback -> OpenClaw gateway route -> message parsing/auth -> agent dispatch
 - **Reply outbound:** Inbound-triggered replies use `sessionWebhook` with DingTalk signature
 - **Active outbound:** Scheduled/active delivery uses robot API `robot/send` with `accessToken`
-- **Runtime mode:** single account (`accountId = "default"`)
+- **Runtime mode:** multi-account — each under `channels.dingtalk.accounts.<name>` is a separate inbound webhook route with its own credentials
 
 ## Installation
 
@@ -78,6 +78,8 @@ openclaw plugins install -l .
 
 Configure OpenClaw in `~/.openclaw/openclaw.json`:
 
+### Single bot (backwards-compatible)
+
 ```json
 {
   "channels": {
@@ -94,17 +96,66 @@ Configure OpenClaw in `~/.openclaw/openclaw.json`:
 }
 ```
 
-- `secretKey` (required): DingTalk bot security key (typically starts with `SEC`)
-- `enabled` (optional): defaults to `true`
-- `webhookPath` (optional): inbound callback path, defaults to `/dingtalk-channel/message`
-- `accessToken` (optional): DingTalk access token used for rich-text image download and active outbound delivery
+### Multiple bots (multi-account)
+
+Use `channels.dingtalk.accounts.<name>` to add additional DingTalk robots. Each account inherits base-level settings and can override any of them.
+
+```json
+{
+  "channels": {
+    "dingtalk": {
+      "enabled": true,
+      "secretKey": "SEC-xxx",
+      "accessToken": "dt_access_token_xxx",
+      "webhookPath": "/dingtalk-channel/message",
+      "blockStreaming": true,
+      "toolProgress": "simple",
+      "accounts": {
+        "bot2": {
+          "secretKey": "SEC-yyy",
+          "accessToken": "dt_access_token_yyy",
+          "webhookPath": "/dingtalk-channel/message-bot2"
+        },
+        "bot3": {
+          "secretKey": "SEC-zzz",
+          "accessToken": "dt_access_token_zzz",
+          "webhookPath": "/dingtalk-channel/message-bot3",
+          "toolProgress": "off"
+        }
+      }
+    }
+  }
+}
+```
+
+Account names use lowercase alphanumeric, hyphens, and underscores (max 64 chars). The name `"default"` is reserved for the base-level config.
+
+#### Per-parameter inheritance
+
+| Parameter | Base-level | Account-level override |
+|---|---|---|
+| `enabled` | defaults `true` | can set `false` to disable this account |
+| `secretKey` | **required** at base level | inherits from base if omitted |
+| `accessToken` | inherits from base if omitted | |
+| `webhookPath` | `/dingtalk-channel/message` | **must differ** per account (each account needs its own HTTP route) |
+| `blockStreaming` | defaults `true` | inherits from base if omitted |
+| `toolProgress` | defaults `simple` | inherits from base if omitted |
+| `toolProgressInGroup` | defaults `simple` | inherits from base if omitted |
+
+#### Base-level parameters
+
+- `secretKey` (required at base level, inherited by all accounts): DingTalk bot security key (typically starts with `SEC`)
+- `webhookPath` (optional, defaults to `/dingtalk-channel/message`): base inbound callback path; account-level paths override this
+- `accessToken` (optional): DingTalk access token used for rich-text image download and active outbound delivery; inherited by accounts that don't specify one
 - `blockStreaming` (optional): defaults to `true`; when `true`, block replies are sent as they are generated instead of waiting for final aggregation
 - `toolProgress` (optional): `off` or `simple`, defaults to `simple`; controls tool progress hints in direct chats
 - `toolProgressInGroup` (optional): `off` or `simple`, defaults to `simple`; controls tool progress hints in group chats
 
 ## DingTalk Callback Setup
 
-In DingTalk bot settings, configure the callback URL to match `webhookPath`:
+In DingTalk bot settings, configure the callback URL to match `webhookPath` for each bot.
+
+### Single bot
 
 ```text
 https://<your-gateway-host>/dingtalk-channel/message
@@ -115,6 +166,18 @@ Example:
 ```text
 https://your-domain.com/dingtalk-channel/message
 ```
+
+### Multiple bots
+
+Each account's DingTalk callback must point to its unique `webhookPath`:
+
+| Account name | webhookPath | DingTalk callback URL |
+|---|---|---|
+| `default` (base) | `/dingtalk-channel/message` | `https://your-domain.com/dingtalk-channel/message` |
+| `bot2` | `/dingtalk-channel/message-bot2` | `https://your-domain.com/dingtalk-channel/message-bot2` |
+| `bot3` | `/dingtalk-channel/message-bot3` | `https://your-domain.com/dingtalk-channel/message-bot3` |
+
+Set up your reverse proxy (nginx, Alibaba CDN, etc.) to route different paths to the OpenClaw gateway. Each account must use a different path since the OpenClaw gateway uses path-based routing to distinguish webhook handlers across accounts.
 
 ## Inbound Message Handling
 
@@ -295,7 +358,7 @@ for the full root-cause analysis, workarounds applied, and suggested upstream fi
 
 - Only `text` and `richText` are handled for inbound parsing
 - Active outbound requires `channels.dingtalk.accessToken`
-- Single-account model only (`default`)
+- Each account must have a unique `webhookPath` (no two accounts can share the same inbound URL)
 
 ## License
 

@@ -39,7 +39,7 @@ DingTalk Channel，本项目刻意选择了 **自定义机器人（Custom Robot�
 - **入站：** 钉钉 `POST` 回调 -> OpenClaw gateway 路由 -> 消息解析/鉴权 -> agent 分发
 - **回复出站：** 入站触发的回复使用 `sessionWebhook` 并签名发送
 - **主动出站：** 定时/主动投递使用 `robot/send` + `accessToken`
-- **运行模式：** 单账号（`accountId = "default"`）
+- **运行模式：** 多账号 — 每个 `channels.dingtalk.accounts.<name>` 都是一个独立的入站回调路由，拥有自己的凭证
 
 ## 安装
 
@@ -70,6 +70,8 @@ openclaw plugins install -l .
 
 在 `~/.openclaw/openclaw.json` 中配置：
 
+### 单机器人（向后兼容）
+
 ```json
 {
   "channels": {
@@ -77,20 +79,75 @@ openclaw plugins install -l .
       "enabled": true,
       "secretKey": "SECxxxxxxxx",
       "webhookPath": "/dingtalk-channel/message",
-      "accessToken": "dt_access_token_xxx"
+      "accessToken": "dt_access_token_xxx",
+      "blockStreaming": true,
+      "toolProgress": "simple",
+      "toolProgressInGroup": "simple"
     }
   }
 }
 ```
 
-- `secretKey`（必填）：钉钉机器人安全密钥（通常以 `SEC` 开头）
-- `enabled`（可选）：默认 `true`
-- `webhookPath`（可选）：入站回调路径，默认 `/dingtalk-channel/message`
-- `accessToken`（可选）：用于富文本图片下载和主动出站投递的钉钉 access token
+### 多机器人（多账号）
+
+使用 `channels.dingtalk.accounts.<name>` 添加额外的钉钉机器人。每个账号继承 base 层的配置，可以按需覆盖任意参数。
+
+```json
+{
+  "channels": {
+    "dingtalk": {
+      "enabled": true,
+      "secretKey": "SEC-xxx",
+      "accessToken": "dt_access_token_xxx",
+      "webhookPath": "/dingtalk-channel/message",
+      "blockStreaming": true,
+      "toolProgress": "simple",
+      "accounts": {
+        "bot2": {
+          "secretKey": "SEC-yyy",
+          "accessToken": "dt_access_token_yyy",
+          "webhookPath": "/dingtalk-channel/message-bot2"
+        },
+        "bot3": {
+          "secretKey": "SEC-zzz",
+          "accessToken": "dt_access_token_zzz",
+          "webhookPath": "/dingtalk-channel/message-bot3",
+          "toolProgress": "off"
+        }
+      }
+    }
+  }
+}
+```
+
+账号名使用小写字母、数字、连字符和下划线（最长 64 字符）。`"default"` 保留给 base 层配置使用。
+
+#### 参数继承规则
+
+| 参数 | base 层 | 账号层覆盖 |
+|---|---|---|
+| `enabled` | 默认 `true` | 可设为 `false` 禁用该账号 |
+| `secretKey` | base 层**必填** | 省略时继承 base |
+| `accessToken` | 继承 base，若省略也继承 | |
+| `webhookPath` | `/dingtalk-channel/message` | **每个账号必须不同**（每个账号需要独立的 HTTP 路由） |
+| `blockStreaming` | 默认 `true` | 省略时继承 base |
+| `toolProgress` | 默认 `simple` | 省略时继承 base |
+| `toolProgressInGroup` | 默认 `simple` | 省略时继承 base |
+
+#### base 层参数说明
+
+- `secretKey`（base 层必填，所有账号继承或覆盖）：钉钉机器人安全密钥（通常以 `SEC` 开头）
+- `webhookPath`（可选，默认 `/ding-talk-channel/message`）：base 层的入站回调路径；账号层路径会覆盖此值
+- `accessToken`（可选）：用于富文本图片下载和主动出站投递的钉钉 access token；账号层未指定时继承 base
+- `blockStreaming`（可选）：默认 `true`；为 `true` 时逐 block 发送回复，否则等待最终聚合后一次性发出
+- `toolProgress`（可选）：`off` 或 `simple`，默认 `simple`；控制在单聊中的工具进度提示
+- `toolProgressInGroup`（可选）：`off` 或 `simple`，默认 `simple`；控制在群聊中的工具进度提示
 
 ## 钉钉回调设置
 
-在钉钉机器人配置中，将回调地址设置为与 `webhookPath` 一致：
+在钉钉机器人配置中，将回调地址设置为与 `webhookPath` 一致。
+
+### 单机器人
 
 ```text
 https://<your-gateway-host>/dingtalk-channel/message
@@ -101,6 +158,18 @@ https://<your-gateway-host>/dingtalk-channel/message
 ```text
 https://your-domain.com/dingtalk-channel/message
 ```
+
+### 多机器人
+
+每个账号的钉钉回调地址需对应其 `webhookPath`：
+
+| 账号名 | webhookPath | 钉钉回调地址 |
+|---|---|---|
+| `default`（base） | `/dingtalk-channel/message` | `https://your-domain.com/dingtalk-channel/message` |
+| `bot2` | `/dingtalk-channel/message-bot2` | `https://your-domain.com/dingtalk-channel/message-bot2` |
+| `bot3` | `/dingtalk-channel/message-bot3` | `https://your-domain.com/dingtalk-channel/message-bot3` |
+
+通过反向代理（如 nginx/身份证号/崖阿里巴巴域名代理），将不同路径转发到 OpenClaw gateway 即可。不同账号的回调必须走不同路径，因为 OpenClaw gateway 在同一端口上按路径区分不同账号的 webhook 处理。
 
 ## 入站消息处理
 
@@ -255,7 +324,7 @@ npm run lint:fix
 
 - 入站解析仅处理 `text` 与 `richText`
 - 主动出站依赖 `channels.dingtalk.accessToken`
-- 仅支持单账号模型（`default`）
+- 每个账号必须使用不同的 `webhookPath`（不同账号的入站回调不能有相同路径）
 
 ## License
 
